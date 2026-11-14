@@ -1,0 +1,7 @@
+mage-ai
+pandas
+pyarrow
+sqlalchemy
+pyodbc
+requests
+# geopandas   # chi can neu doc Shapefile (giai doan 3)

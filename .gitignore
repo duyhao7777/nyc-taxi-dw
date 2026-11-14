@@ -1,0 +1,20 @@
+# Du lieu lon: KHONG dua len GitHub (gioi han 100 MB/file)
+data/source/*
+!data/source/.gitkeep
+*.parquet
+*.zip
+*.pbix
+profiling_report.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Mage runtime
+mage_etl/.logs/
+mage_etl/.variables/
+mage_etl/mage_data/
+.mage_data/
