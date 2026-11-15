@@ -70,5 +70,5 @@ spark_config: {}
 tags: []
 type: python
 uuid: load_taxi_zones
-variables_dir: C:\Users\DuyHao/.mage_data\mage_etl
+variables_dir: C:\Users\ADMIN/.mage_data\mage_etl
 widgets: []

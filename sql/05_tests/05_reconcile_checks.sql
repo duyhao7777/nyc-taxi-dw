@@ -67,3 +67,4 @@ IF OBJECT_ID(N'stg.yellow_trip') IS NOT NULL AND OBJECT_ID(N'dds.fact_trip') IS 
 
 SELECT * FROM @r ORDER BY check_name;
 GO
+SELECT COUNT(*) FROM stg.taxi_zone
