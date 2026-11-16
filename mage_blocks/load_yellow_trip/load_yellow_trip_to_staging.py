@@ -158,6 +158,10 @@ def process_chunk(df, period_key, batch_id, source_file, start_row):
     m_bad_total = df['total_amount'].notna() & ((df['total_amount'] < 0) | (df['total_amount'] > 1000))
     reasons = np.where(m_bad_total, reasons + "INVALID_TOTAL_AMOUNT;", reasons)
 
+    # 7. trip_distance <= 0 hoac NULL (Quy tac muc I.4: quang duong <= 0)
+    m_bad_dist = df['trip_distance'].isna() | (df['trip_distance'] <= 0)
+    reasons = np.where(m_bad_dist, reasons + "DISTANCE_LE_ZERO;", reasons)
+
     reject_mask = reasons != ""
     cleaned_reasons = pd.Series(reasons, index=df.index).str.rstrip(';')
 
