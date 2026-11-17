@@ -87,7 +87,7 @@ NUMERIC_COLS = [
 
 def process_chunk(df, period_key, batch_id, source_file, start_row):
     """Chuan hoa du lieu va kiem tra quy tac G9 tren mot khoi (chunk)."""
-    df = df.rename(columns=COL_MAP)
+    df = df.rename(columns=COL_MAP).reset_index(drop=True)
 
     # Xu ly cac cot phu phi vang mat o cac nam cu
     for col in ['congestion_surcharge', 'airport_fee', 'cbd_congestion_fee']:
@@ -180,6 +180,11 @@ def load_yellow_trip_to_staging(*args, **kwargs):
     engine = get_engine()
 
     parquet_files = sorted(glob.glob(os.path.join(data_dir, 'yellow_tripdata_*.parquet')))
+    period = kwargs.get("period_key")
+    if period:
+        parquet_files = [f for f in parquet_files if os.path.basename(f) == f"yellow_tripdata_{period}.parquet"]
+    if not parquet_files and period:
+        raise FileNotFoundError(f"Missing Parquet for {period}")
     if not parquet_files:
         print(f"Khong tim thay tep Parquet nao trong {data_dir}")
         return {"status": "No files found", "data_dir": data_dir}
@@ -226,7 +231,13 @@ def load_yellow_trip_to_staging(*args, **kwargs):
                 )
 
             pf = pq.ParquetFile(file_path)
+            required = set(STAGING_COLS[:-3]) - {"congestion_surcharge", "airport_fee", "cbd_congestion_fee"}
+            missing = required - {COL_MAP.get(c, c) for c in pf.schema_arrow.names}
+            if missing:
+                raise ValueError(f"Unsupported source schema: missing {sorted(missing)}")
             total_file_rows = pf.metadata.num_rows
+            if not total_file_rows:
+                raise ValueError("Empty source file")
             print(f"Tong so dong trong tep: {total_file_rows:,} dong (Doc theo khoi {chunk_size:,} dong)")
 
             file_read = 0

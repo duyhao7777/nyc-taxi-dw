@@ -37,7 +37,12 @@ def main():
     print(f"Kích thước khối (chunk size): {args.chunk_size:,} dòng")
     print("==================================================")
 
-    res = load_yellow_trip_to_staging()
+    res = {}
+    if args.months:
+        for period in args.months:
+            res.update(load_yellow_trip_to_staging(period_key=period))
+    else:
+        res = load_yellow_trip_to_staging()
     print("\nKết quả tổng kết:")
     for k, v in res.items():
         print(f"  {k}: {v}")

@@ -2,9 +2,7 @@ from sqlalchemy import text
 from mage_etl.utils.etl_common import (get_engine, start_batch, end_batch,
     log_error, is_period_loaded, mark_period_loaded)
 
-MONTHS = [('2024-01', '2024-01-01', '2024-02-01'),
-          ('2024-02', '2024-02-01', '2024-03-01'),
-          ('2025-01', '2025-01-01', '2025-02-01')]
+from datetime import date
 
 SQL = '''
 INSERT INTO dds.fact_trip (stg_trip_id, pickup_datetime, dropoff_datetime, date_key,
@@ -32,18 +30,32 @@ if 'data_exporter' not in globals():
 @data_exporter
 def export_fact_trip(*args, **kwargs):
     engine = get_engine()
-    for k, d1, d2 in MONTHS:
+    period = kwargs.get('period_key')
+    with engine.connect() as conn:
+        periods = [r[0].strip() for r in conn.execute(text("SELECT period_key FROM meta.etl_load_control WHERE dataset='yellow_trip' AND status='Success' ORDER BY period_key"))]
+    if period:
+        if period not in periods:
+            raise ValueError(f'Staging not successful for {period}')
+        periods = [period]
+    for k in periods:
+        d1 = date.fromisoformat(k + '-01')
+        d2 = date(d1.year + (d1.month == 12), d1.month % 12 + 1, 1)
         if is_period_loaded(engine, 'fact_trip', k):
             print('Bo qua (da nap):', k)
             continue
         batch_id = start_batch(engine, 'load_dds', 'DDS', 'dds.fact_trip', period_key=k)
         try:
             with engine.begin() as conn:
+                expected = conn.execute(text('SELECT COUNT_BIG(*) FROM stg.yellow_trip WHERE pickup_datetime >= :d1 AND pickup_datetime < :d2'), {'d1': d1, 'd2': d2}).scalar()
                 conn.execute(text('DELETE FROM dds.fact_trip WHERE period_key = :k'), {'k': k})
                 r = conn.execute(text(SQL), {'b': batch_id, 'k': k, 'd1': d1, 'd2': d2})
-            end_batch(engine, batch_id, 'Success', rows_read=r.rowcount, rows_loaded=r.rowcount)
+                actual = conn.execute(text('SELECT COUNT_BIG(*) FROM dds.fact_trip WHERE period_key=:k'), {'k': k}).scalar()
+                if actual != expected:
+                    raise RuntimeError(f'Fact count {actual} != staging {expected}')
+            end_batch(engine, batch_id, 'Success', rows_read=expected, rows_loaded=actual)
             mark_period_loaded(engine, 'fact_trip', k, batch_id)
         except Exception as e:
             log_error(engine, batch_id, 'export_fact_trip_' + k, e)
             end_batch(engine, batch_id, 'Failed', message=str(e)[:4000])
+            mark_period_loaded(engine, 'fact_trip', k, batch_id, 'Failed')
             raise
