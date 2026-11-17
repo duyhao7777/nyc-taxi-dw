@@ -69,6 +69,7 @@ Mở SSMS, kết nối vào máy, chạy lần lượt (mỗi file bấm Execute
 1. `sql/00_setup/00_create_database.sql`
 2. `sql/04_metadata/04_metadata_tables.sql`
 3. `sql/02_staging/02_stg_taxi_zone.sql`
+4. `sql/02_staging/02_stg_yellow_trip.sql`
 
 ### 3.5. Tải dữ liệu
 
@@ -112,7 +113,7 @@ Mở http://localhost:6790. Góc trên trái phải hiện `mage_etl`. Nếu tra
 | Pipeline | Làm gì | Người phụ trách | Trạng thái |
 |---|---|---|---|
 | `load_taxi_zones` | Nạp 265 khu vực vào `stg.taxi_zone` | Hảo | Xong |
-| Nạp Trip vào Staging | Parquet → `stg.yellow_trip` | Hiệu | Đang làm |
+| `load_yellow_trip` | Parquet → `stg.yellow_trip` & `stg.yellow_trip_reject` | Hiệu | Xong |
 | Nạp Dim và Fact | Staging → `dds.*` | Cường | Đang làm |
 | Pipeline tổng | Chạy tuần tự các bước trên theo tháng | Huy | Chưa làm |
 
@@ -198,3 +199,53 @@ git archive --format=zip -o MaNhom_Src.zip HEAD
 ```
 
 Lệnh này chỉ đóng gói các tệp đã commit nên không kèm dữ liệu. Sau đó gói `MaNhom_BaoCao.pdf` và `MaNhom_Src.zip` vào một file zip tên `MaNhom_MSSV1_MSSV2_MSSV3_MSSV4.zip` rồi nộp lên Moodle.
+
+## 10. Tài liệu triển khai tầng Staging và Làm sạch dữ liệu (Hiệu)
+
+### 10.1. Thiết kế bảng Staging (`sql/02_staging/02_stg_yellow_trip.sql`)
+
+- **`stg.yellow_trip`**: Chứa các bản ghi hợp lệ sau khi làm sạch.
+  - Tên cột chuẩn hóa đồng nhất theo `snake_case` cho tất cả các năm (`vendor_id`, `pickup_datetime`, `total_amount`,...).
+  - Tối ưu dung lượng kiểu số thực tiền tệ: Sử dụng `DECIMAL(10,2)` thay vì `DECIMAL(18,2)`, tiết kiệm 44 bytes trên từng dòng dữ liệu (tiết kiệm hàng trăm MB đĩa và RAM khi nạp hàng triệu dòng).
+  - Tương thích đa năm (Schema Evolution): Các cột phụ phí mới ở các năm sau (`congestion_surcharge`, `airport_fee`, `cbd_congestion_fee`) được gán giá trị mặc định `0.0` để khi nạp các năm cũ (như 2015, 2024) không bị lỗi thiếu cột.
+  - Bổ sung khóa chính tự tăng `stg_trip_id BIGINT IDENTITY(1,1)` và non-clustered index trên `(batch_id)`, `(pickup_datetime)` để tối ưu hiệu năng truy vấn và đối soát.
+- **`stg.yellow_trip_reject`**: Chứa toàn bộ các bản ghi vi phạm quy tắc làm sạch.
+  - Cấu trúc tương tự bảng chính nhưng bổ sung cột `reject_reason VARCHAR(255)` để lưu chi tiết các mã lỗi vi phạm và `rejected_at` phục vụ kiểm toán dữ liệu.
+
+### 10.2. Quy tắc làm sạch dữ liệu (Mục I.4 & Quyết định G9)
+
+Các bản ghi vi phạm một trong các điều kiện sau sẽ được tự động chuyển sang bảng `stg.yellow_trip_reject`:
+
+| Mã lỗi (`reject_reason`) | Điều kiện vi phạm | Ý nghĩa nghiệp vụ |
+|---|---|---|
+| `DROPOFF_LE_PICKUP` | `dropoff_datetime <= pickup_datetime` | Thời điểm trả trước hoặc bằng thời điểm đón |
+| `DURATION_EXCEEDS_24H` | `(dropoff - pickup) > 24 giờ` | Thời lượng chuyến đi kéo dài bất thường |
+| `DISTANCE_LE_ZERO` | `trip_distance <= 0` hoặc `NULL` | Quãng đường di chuyển bằng 0 hoặc âm |
+| `NEGATIVE_FARE` | `fare_amount < 0` | Tiền cước bị âm (giao dịch hoàn tiền hoặc lỗi hệ thống) |
+| `INVALID_TOTAL_AMOUNT` | `total_amount < 0` hoặc `> 1000` | Tổng tiền âm hoặc vượt quá ngưỡng hợp lý (1.000 USD) |
+| `OUT_OF_PERIOD` | `pickup_datetime` ngoài tháng nạp | Bản ghi lạc kỳ (ví dụ file 2024-01 nhưng thời gian đón ở 2023) |
+| `INVALID_DATETIME` | `pickup_datetime` hoặc `dropoff_datetime` bị `NULL` | Không thể xác định mốc thời gian của chuyến đi |
+
+*Lưu ý:* Nếu một dòng vi phạm nhiều lỗi đồng thời, các mã lỗi sẽ được kết hợp bằng dấu `;` (ví dụ: `DISTANCE_LE_ZERO;NEGATIVE_FARE`).
+
+### 10.3. Pipeline nạp Trip (`mage_etl/pipelines/load_yellow_trip`)
+
+- **Đọc theo khối (Streaming Chunking)**: Sử dụng `pyarrow.parquet.ParquetFile.iter_batches(batch_size=100_000)` để streaming từng khối 100.000 dòng. Bộ nhớ RAM luôn duy trì ổn định dưới 150 MB trong suốt quá trình nạp file gần 3 triệu dòng, tránh nguy cơ tràn RAM.
+- **Tính Idempotent**: Kiểm tra `is_period_loaded(engine, 'yellow_trip', period_key)`. Nếu tháng đó đã có trạng thái `Success` trong `meta.etl_load_control`, pipeline sẽ tự động in thông báo và bỏ qua, không nạp trùng lặp.
+- **Ghi vết Metadata**: Khởi tạo batch bằng `start_batch()`, ghi nhận `rows_read`, `rows_loaded`, `rows_rejected` qua `end_batch()`, và lưu lỗi vào `meta.etl_error_log` qua `log_error()`.
+
+### 10.4. Cách chạy và Kiểm tra đối soát
+
+1. **Chạy nạp dữ liệu**:
+   ```powershell
+   # Cách 1: Chạy trực tiếp qua script (khuyên dùng, có thanh tiến độ trực quan)
+   python scripts/load_yellow_trip.py
+
+   # Cách 2: Chạy qua Mage CLI
+   mage run mage_etl load_yellow_trip
+   ```
+
+2. **Kiểm tra đối soát và lấy số liệu báo cáo**:
+   - Chạy `sql/05_tests/05_reconcile_checks.sql`: Kiểm tra Check 3 (`rows_read = rows_loaded + rows_rejected`) và Check 4 (`stg.yellow_trip rows = sum(rows_loaded)`) đạt `PASS`.
+   - Chạy `sql/05_tests/06_reject_statistics.sql`: Xuất 4 bảng thống kê chi tiết về số lượng nạp, số lượng reject, và phân rã các lý do lỗi phục vụ viết báo cáo.
+
