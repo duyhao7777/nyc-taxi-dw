@@ -18,3 +18,4 @@ mage_etl/.logs/
 mage_etl/.variables/
 mage_etl/mage_data/
 .mage_data/
+mage_data/
