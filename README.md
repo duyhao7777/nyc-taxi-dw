@@ -114,7 +114,7 @@ Mở http://localhost:6790. Góc trên trái phải hiện `mage_etl`. Nếu tra
 |---|---|---|---|
 | `load_taxi_zones` | Nạp 265 khu vực vào `stg.taxi_zone` | Hảo | Xong |
 | `load_yellow_trip` | Parquet → `stg.yellow_trip` & `stg.yellow_trip_reject` | Hiệu | Xong |
-| Nạp Dim và Fact | Staging → `dds.*` | Cường | Đang làm |
+| Nạp Dim và Fact | Staging → `dds.*` | Cường | Xong |
 | Pipeline tổng | Chạy tuần tự các bước trên theo tháng | Huy | Chưa làm |
 
 Cập nhật bảng này khi hoàn thành.
