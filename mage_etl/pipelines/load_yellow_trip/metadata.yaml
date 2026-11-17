@@ -39,5 +39,5 @@ tags:
 - yellow_trip
 type: python
 uuid: load_yellow_trip
-variables_dir: C:\Users\ADMIN/.mage_data\mage_etl
+variables_dir: C:\Users\DuyHao/.mage_data\mage_etl
 widgets: []

@@ -83,7 +83,7 @@ Mặc định tải tháng 2024-01 và 2025-01, kèm `taxi_zone_lookup.csv`. T�
 Trong PowerShell (**mỗi lần mở cửa sổ mới đều phải đặt lại**):
 
 ```
-$env:DB_SERVER="localhost"                  # nếu cài Express: localhost\SQLEXPRESS
+$env:DB_SERVER="localhost\SQLEXPRESS"                  # nếu cài Express: localhost\SQLEXPRESS
 $env:DATA_DIR="C:\dw-taxi\data\source"      # đường dẫn tuyệt đối tới data/source
 ```
 
