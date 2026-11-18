@@ -10,12 +10,12 @@ blocks:
   language: python
   name: sync_dim_location
   retry_config: null
-  status: updated
+  status: executed
   timeout: null
   type: data_exporter
   upstream_blocks: []
   uuid: sync_dim_location
-- all_upstream_blocks_executed: false
+- all_upstream_blocks_executed: true
   color: null
   configuration: {}
   downstream_blocks: []
@@ -25,7 +25,7 @@ blocks:
   language: python
   name: export_fact_trip
   retry_config: null
-  status: updated
+  status: executed
   timeout: null
   type: data_exporter
   upstream_blocks:
@@ -53,5 +53,5 @@ spark_config: {}
 tags: []
 type: python
 uuid: load_dds
-variables_dir: /home/src/mage_data/mage_etl
+variables_dir: C:\Users\DuyHao/.mage_data\mage_etl
 widgets: []
