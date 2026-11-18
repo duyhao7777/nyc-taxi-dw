@@ -116,7 +116,7 @@ Mở http://localhost:6790. Góc trên trái phải hiện `mage_etl`. Nếu tra
 |---|---|---|---|
 | `load_taxi_zones` | Nạp 265 khu vực vào `stg.taxi_zone` | Hảo | Xong |
 | `load_yellow_trip` | Parquet → `stg.yellow_trip` & `stg.yellow_trip_reject` | Hiệu | Xong |
-| Nạp Dim và Fact | Staging → `dds.*` | Cường | Xong |
+| Nạp Dim và Fact | Staging → `dds.*` | Cường | Xong — **8 Dimension + `dds.fact_trip`** theo GĐ1 (11 khoá ngoại, đủ measure) |
 | `master_etl` | Zones → Staging → Dim → Fact → đối soát | Huy | Đã tích hợp; kiểm thử ba kỳ và Scheduler thành công |
 
 Cập nhật bảng này khi hoàn thành.
@@ -258,7 +258,7 @@ Theo code hiện tại, các bản ghi vi phạm một trong các điều kiện
 
 ### 11.1. Phạm vi và điều kiện
 
-Master điều phối Zones → Trip Staging/Reject → Dim Location → Fact → đối soát. Dim Date được tạo bằng SQL trước khi chạy, lịch 2015–2026. Phạm vi ưu tiên là file có PU/DO LocationID từ khoảng 2015; mới kiểm thử thực tế ba kỳ 2024-01, 2024-02, 2025-01. DDS hiện có hai Dimension vật lý, chưa đủ tám theo GĐ1.
+Master điều phối Zones → Trip Staging/Reject → Dim Location → Fact → đối soát. Dim Date và 7 Dimension còn lại được tạo bằng SQL trước khi chạy (lịch 2015–2026; `sql/03_dds/03_dds_tables.sql` tạo đủ **8 Dimension + Fact** theo GĐ1, idempotent nên chạy lại nhiều lần được). Phạm vi ưu tiên là file có PU/DO LocationID từ khoảng 2015; mới kiểm thử thực tế ba kỳ 2024-01, 2024-02, 2025-01.
 
 Trước khi chạy, hoàn thành mục 3, kiểm tra `Ket noi OK`, đủ các bảng và file nguồn. Ví dụ đặt đường dẫn theo repo hiện tại:
 

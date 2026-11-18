@@ -65,6 +65,52 @@ IF OBJECT_ID(N'stg.yellow_trip') IS NOT NULL AND OBJECT_ID(N'dds.fact_trip') IS 
                      (SELECT ROUND(SUM(CAST(total_amount AS DECIMAL(18,2))), 2) FROM dds.fact_trip)
                 THEN N'PASS' ELSE N'FAIL' END;
 
+-- 7. GĐ1: 8 dimension trong DDS da nap day du
+IF OBJECT_ID(N'dds.dim_date') IS NOT NULL
+    INSERT @r
+    SELECT N'8 DDS dimensions populated', N'8', CAST((
+        SELECT COUNT(*) FROM (
+            SELECT COUNT(*) AS c, 1 AS minc FROM dds.dim_date
+            UNION ALL SELECT COUNT(*), 1440 FROM dds.dim_time
+            UNION ALL SELECT COUNT(*), 266 FROM dds.dim_location
+            UNION ALL SELECT COUNT(*), 5 FROM dds.dim_vendor
+            UNION ALL SELECT COUNT(*), 8 FROM dds.dim_payment_type
+            UNION ALL SELECT COUNT(*), 8 FROM dds.dim_rate_code
+            UNION ALL SELECT COUNT(*), 4 FROM dds.dim_passenger_group
+            UNION ALL SELECT COUNT(*), 6 FROM dds.dim_distance_band) x WHERE x.c >= x.minc) AS NVARCHAR(100)),
+           CASE WHEN (SELECT COUNT(*) FROM (
+                SELECT COUNT(*) AS c, 1 AS minc FROM dds.dim_date
+                UNION ALL SELECT COUNT(*), 1440 FROM dds.dim_time
+                UNION ALL SELECT COUNT(*), 266 FROM dds.dim_location
+                UNION ALL SELECT COUNT(*), 5 FROM dds.dim_vendor
+                UNION ALL SELECT COUNT(*), 8 FROM dds.dim_payment_type
+                UNION ALL SELECT COUNT(*), 8 FROM dds.dim_rate_code
+                UNION ALL SELECT COUNT(*), 4 FROM dds.dim_passenger_group
+                UNION ALL SELECT COUNT(*), 6 FROM dds.dim_distance_band) x WHERE x.c >= x.minc) = 8
+            THEN N'PASS' ELSE N'FAIL' END;
+
+-- 8. GĐ1: moi dong fact phai co day du 11 khoa ngoai + measure
+IF OBJECT_ID(N'dds.fact_trip') IS NOT NULL
+    INSERT @r
+    SELECT N'fact rows with NULL or orphan dimension keys',
+           N'0', CAST(COUNT_BIG(*) AS NVARCHAR(100)),
+           CASE WHEN COUNT_BIG(*) = 0 THEN N'PASS' ELSE N'FAIL' END
+    FROM dds.fact_trip f
+    LEFT JOIN dds.dim_date dd ON dd.date_key = f.date_key
+    LEFT JOIN dds.dim_time tp ON tp.time_key = f.pickup_time_key
+    LEFT JOIN dds.dim_time tq ON tq.time_key = f.dropoff_time_key
+    LEFT JOIN dds.dim_location pl ON pl.location_key = f.pu_location_key
+    LEFT JOIN dds.dim_location dl ON dl.location_key = f.do_location_key
+    LEFT JOIN dds.dim_vendor v ON v.vendor_key = f.vendor_key
+    LEFT JOIN dds.dim_payment_type pay ON pay.payment_key = f.payment_key
+    LEFT JOIN dds.dim_rate_code rc ON rc.rate_code_key = f.rate_code_key
+    LEFT JOIN dds.dim_passenger_group pg ON pg.passenger_group_key = f.passenger_group_key
+    LEFT JOIN dds.dim_distance_band db ON db.distance_band_key = f.distance_band_key
+    WHERE dd.date_key IS NULL OR tp.time_key IS NULL OR tq.time_key IS NULL
+       OR pl.location_key IS NULL OR dl.location_key IS NULL OR v.vendor_key IS NULL
+       OR pay.payment_key IS NULL OR rc.rate_code_key IS NULL OR pg.passenger_group_key IS NULL
+       OR db.distance_band_key IS NULL OR f.trip_count <> 1 OR f.trip_duration IS NULL;
+
 SELECT * FROM @r ORDER BY check_name;
 GO
 SELECT COUNT(*) FROM stg.taxi_zone

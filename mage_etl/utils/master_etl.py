@@ -9,7 +9,7 @@ from mage_etl.transformers.clean_zone import clean_zone
 from mage_etl.data_exporters.export_stg_taxi_zone import export_stg_taxi_zone
 from mage_etl.data_loaders.load_yellow_trip_to_staging import load_yellow_trip_to_staging
 from mage_etl.data_exporters.sync_dim_location import sync_dim_location
-from mage_etl.data_exporters.export_fact_trip import export_fact_trip
+from mage_etl.data_exporters.export_fact_trip import export_fact_trip, check_dims, STATIC_DIMS
 
 
 def month_bounds(period_key):
@@ -30,7 +30,7 @@ def reconcile(engine, period_key):
         rejects = c.execute(text('SELECT COUNT_BIG(*) FROM stg.yellow_trip_reject WHERE source_file=:sf'), params).scalar()
         log = c.execute(text("""SELECT b.rows_read,b.rows_loaded,b.rows_rejected FROM meta.etl_load_control l JOIN meta.etl_batch b ON b.batch_id=l.last_batch_id WHERE l.dataset='yellow_trip' AND l.period_key=:k AND l.status='Success' AND b.status='Success'"""), params).one_or_none()
         dup = c.execute(text('SELECT COUNT_BIG(*) FROM (SELECT stg_trip_id FROM dds.fact_trip WHERE period_key=:k GROUP BY stg_trip_id HAVING COUNT_BIG(*)>1) d'), params).scalar()
-        bad = c.execute(text('''SELECT COUNT_BIG(*) FROM dds.fact_trip f LEFT JOIN stg.yellow_trip s ON s.stg_trip_id=f.stg_trip_id LEFT JOIN dds.dim_date d ON d.date_key=f.date_key LEFT JOIN dds.dim_location p ON p.location_key=f.pu_location_key LEFT JOIN dds.dim_location q ON q.location_key=f.do_location_key WHERE f.period_key=:k AND (s.stg_trip_id IS NULL OR s.source_file<>:sf OR d.date_key IS NULL OR p.location_key IS NULL OR q.location_key IS NULL)'''), params).scalar()
+        bad = c.execute(text('''SELECT COUNT_BIG(*) FROM dds.fact_trip f LEFT JOIN stg.yellow_trip s ON s.stg_trip_id=f.stg_trip_id LEFT JOIN dds.dim_date d ON d.date_key=f.date_key LEFT JOIN dds.dim_location p ON p.location_key=f.pu_location_key LEFT JOIN dds.dim_location q ON q.location_key=f.do_location_key LEFT JOIN dds.dim_time tp ON tp.time_key=f.pickup_time_key LEFT JOIN dds.dim_time tq ON tq.time_key=f.dropoff_time_key LEFT JOIN dds.dim_vendor v ON v.vendor_key=f.vendor_key LEFT JOIN dds.dim_payment_type pay ON pay.payment_key=f.payment_key LEFT JOIN dds.dim_rate_code rc ON rc.rate_code_key=f.rate_code_key LEFT JOIN dds.dim_passenger_group pg ON pg.passenger_group_key=f.passenger_group_key LEFT JOIN dds.dim_distance_band db ON db.distance_band_key=f.distance_band_key WHERE f.period_key=:k AND (s.stg_trip_id IS NULL OR s.source_file<>:sf OR d.date_key IS NULL OR p.location_key IS NULL OR q.location_key IS NULL OR tp.time_key IS NULL OR tq.time_key IS NULL OR v.vendor_key IS NULL OR pay.payment_key IS NULL OR rc.rate_code_key IS NULL OR pg.passenger_group_key IS NULL OR db.distance_band_key IS NULL OR f.trip_count<>1 OR f.trip_duration IS NULL)'''), params).scalar()
     checks = {'log_counts': log is not None and tuple(log)==(stg[0]+rejects,stg[0],rejects), 'fact_count': stg[0]==fact[0], 'revenue': stg[1]==fact[1], 'non_null_revenue_count': stg[2]==fact[2], 'unique_fact': dup==0, 'references': bad==0, 'fact_control': is_period_loaded(engine,'fact_trip',period_key)}
     result = {'period_key':period_key,'staging_rows':stg[0],'reject_rows':rejects,'fact_rows':fact[0],'staging_revenue':str(stg[1]),'fact_revenue':str(fact[1]),'checks':checks}
     print(result)
@@ -47,9 +47,10 @@ def run_master(period_key):
             raise FileNotFoundError(data/name)
     engine = get_engine()
     # Serialize master runs across processes; standalone pipelines must not run concurrently.
-    with engine.connect() as lock:
+    # AUTOCOMMIT: SQLAlchemy >= 1.4 khong con Connection.commit(); transaction de ngay giup
+    # giu phan quyen theo session (sp_getapplock @LockOwner='Session') suot thoi gian chay.
+    with engine.connect().execution_options(isolation_level='AUTOCOMMIT') as lock:
         code = lock.execute(text("DECLARE @r int; EXEC @r=sys.sp_getapplock @Resource=N'nyc_taxi_master', @LockMode='Exclusive', @LockOwner='Session', @LockTimeout=0; SELECT @r")).scalar()
-        lock.commit()
         if code is None or code < 0:
             raise RuntimeError('Another master run is active')
         try:
@@ -57,6 +58,9 @@ def run_master(period_key):
                 calendar = c.execute(text('SELECT COUNT(*) FROM dds.dim_date WHERE full_date>=:d1 AND full_date<:d2'), {'d1':start,'d2':end}).scalar()
             if calendar != (end-start).days:
                 raise RuntimeError('Missing dates. Run sql/03_dds/03_dds_tables.sql first')
+            with engine.connect() as c:
+                # 7 chiều tĩnh phải có sẵn; dim_location do chính pipeline nạp nên kiểm tra sau.
+                check_dims(c, tables=STATIC_DIMS)
             if is_period_loaded(engine,'fact_trip',period_key) and not is_period_loaded(engine,'yellow_trip',period_key):
                 raise RuntimeError('Fact marked Success but staging is not; investigate controls before retry')
             zones = clean_zone(load_zone_csv())
@@ -69,7 +73,6 @@ def run_master(period_key):
             return reconcile(engine, period_key)
         finally:
             lock.execute(text("EXEC sys.sp_releaseapplock @Resource=N'nyc_taxi_master', @LockOwner='Session'"))
-            lock.commit()
 
 
 def run_available():

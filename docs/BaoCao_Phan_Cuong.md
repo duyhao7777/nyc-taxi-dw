@@ -1,95 +1,133 @@
-# BÁO CÁO CHI TIẾT PHẦN VIỆC TẦNG DDS (DIM VÀ FACT)
-**Học phần:** Kho dữ liệu & Kinh doanh thông minh (CSC12107 – Giai đoạn 2)
+# BÁO CÁO PHẦN VIỆC TẦNG DDS
+
+**Học phần:** Kho dữ liệu & Kinh doanh thông minh (CSC12107)
+
 **Người thực hiện:** Cường
-**Nhiệm vụ:** Thiết kế bảng DDS, nạp Dim, nạp `dds.fact_trip`, viết phần báo cáo
 
----
+**Phạm vi:** Thiết kế và nạp mô hình DDS, xây dựng pipeline Fact và kiểm tra đối soát dữ liệu.
 
-## 1. Mục tiêu và Vai trò của Tầng DDS trong Kiến trúc Kho dữ liệu
+## 1. Mục tiêu
 
-Trong kiến trúc **Source → Staging → DDS**, tầng DDS là kho dữ liệu đa chiều phục vụ phân tích:
-* **Mô hình sao (Star Schema):** Một bảng sự kiện trung tâm `dds.fact_trip` (grain: 1 dòng = 1 chuyến đi hợp lệ) được bao quanh bởi các bảng chiều `dds.dim_location` và `dds.dim_date`, tối ưu cho truy vấn OLAP và Power BI ở giai đoạn 3.
-* **Khóa thay thế (Surrogate Key):** Dùng `location_key`, `date_key` thay cho khóa nghiệp vụ, cách ly kho khỏi biến động của hệ nguồn.
-* **Bảo toàn đối soát:** Mọi quy tắc làm sạch G9 đã thực hiện ở Staging; DDS giữ nguyên grain và tổng tiền để hai check đối soát (check 5+6 file `05_reconcile_checks.sql`) đạt PASS.
+Tầng DDS chuyển dữ liệu chuyến đi đã hợp lệ từ tầng Staging sang mô hình sao gồm 8 bảng chiều và 1 bảng sự kiện. Mô hình được thiết kế để phục vụ truy vấn phân tích, truy vết dữ liệu và nạp lại theo từng tháng.
 
----
+Tầng DDS sử dụng:
 
-## 2. Thiết kế Cơ sở dữ liệu Tầng DDS (`sql/03_dds/03_dds_tables.sql`)
+- `dds.fact_trip` làm bảng Fact;
+- 8 bảng Dimension: `dim_date`, `dim_time`, `dim_location`, `dim_vendor`, `dim_payment_type`, `dim_rate_code`, `dim_passenger_group`, `dim_distance_band`;
+- khóa thay thế cho các quan hệ Fact–Dimension;
+- đối tượng `Unknown` cho các mã không tra cứu được;
+- khóa, cột lineage và metadata để truy vết ETL.
 
-### 2.1. Bảng `dds.dim_location` (chiều vị trí)
-* Nguồn duy nhất: `stg.taxi_zone` (265 dòng đã kiểm chứng).
-* `location_key INT IDENTITY(1,1)` khóa thay thế + `location_id INT UNIQUE` khóa tự nhiên 1–265, SCD loại 1 (đồng bộ ghi đè toàn phần mỗi lần nạp).
-* Dòng `Unknown` (`location_id = -1`) để các chuyến có mã vùng lạ không bao giờ vi phạm FK.
+## 2. Thiết kế mô hình DDS
 
-### 2.2. Bảng `dds.dim_date` (chiều thời gian, sinh sẵn)
-* Khóa `date_key INT` dạng `yyyymmdd`, sinh sẵn 2024-01-01 → 2026-12-31 (1.096 dòng) bằng CTE đệ quy, chạy lại an toàn nhờ `NOT EXISTS`.
-* Thuộc tính: `year_num, quarter_num, month_num, day_num, day_of_week (DATEFIRST 1), is_weekend`.
+### 2.1. Bảng Fact
 
-### 2.3. Bảng `dds.fact_trip` (sự kiện chuyến đi)
-* Grain 1:1 với `stg.yellow_trip` (giữ `stg_trip_id` để truy vết), gồm `date_key`, `pu/do_location_key` (FK), các chiều suy biến (`vendor_id, rate_code_id, payment_type`), toàn bộ measure tiền (`DECIMAL(10,2)`, giữ nguyên `total_amount` phục vụ đối soát), `batch_id` + `period_key` truy vết lần nạp.
-* 4 non-clustered index trên `batch_id`, `period_key`, `date_key`, `(pu, do)` phục vụ đối soát và join.
+`dds.fact_trip` có grain: một dòng tương ứng với một chuyến đi hợp lệ trong `stg.yellow_trip`.
 
----
+Các khóa tham chiếu gồm:
 
-## 3. Kiến trúc Pipeline nạp DDS (`mage_etl/pipelines/load_dds`)
+- `date_key`, `dropoff_date_key`;
+- `pickup_time_key`, `dropoff_time_key`;
+- `pu_location_key`, `do_location_key`;
+- `vendor_key`, `payment_key`, `rate_code_key`, `passenger_group_key`, `distance_band_key`.
 
+Các measure và thuộc tính nghiệp vụ gồm `trip_count`, `trip_duration`, thời gian đón/trả, quãng đường, số hành khách và các khoản tiền. Dữ liệu được nạp nguyên giá trị để thực hiện đối soát Staging–DDS. Hai cột `batch_id` và `period_key` lưu batch nạp và kỳ dữ liệu.
+
+### 2.2. Các bảng Dimension
+
+| Bảng | Khóa | Phạm vi dữ liệu |
+|---|---|---|
+| `dds.dim_date` | `date_key` dạng YYYYMMDD | Lịch từ 2015-01-01 đến 2026-12-31, gồm năm, quý, tháng, tuần, ngày trong tuần và ngày cuối tuần |
+| `dds.dim_time` | `time_key = giờ × 60 + phút + 1` | 1.440 phút trong ngày, chia thành Night, Morning, Afternoon và Evening |
+| `dds.dim_location` | `location_key` | 265 zone từ `stg.taxi_zone`, có thêm dòng Unknown |
+| `dds.dim_vendor` | `vendor_key` | Mã nhà cung cấp 1, 2, 6, 7 và dòng Unknown |
+| `dds.dim_payment_type` | `payment_key` | Mã thanh toán 0 đến 6 và dòng Unknown |
+| `dds.dim_rate_code` | `rate_code_key` | Mã biểu phí 1 đến 6, 99 và dòng Unknown |
+| `dds.dim_passenger_group` | `passenger_group_key` | Single, Small group, Large group và Unknown |
+| `dds.dim_distance_band` | `distance_band_key` | Under 1, 1–3, 3–7, 7–15, 15 miles and up và Invalid |
+
+Các quy tắc phân nhóm được áp dụng trực tiếp trong câu nạp Fact:
+
+- Nhóm hành khách: 1; 2–4; 5–6; các trường hợp rỗng, 0 hoặc trên 6 được gán Unknown.
+- Khoảng cự ly: dưới 1 dặm; 1–3 dặm; 3–7 dặm; 7–15 dặm; từ 15 dặm trở lên; cự ly rỗng, không dương hoặc trên 100 dặm thuộc Invalid.
+- Khung giờ: Night 0–5, Morning 6–11, Afternoon 12–17 và Evening 18–23.
+
+`dim_location`, `dim_vendor`, `dim_payment_type`, `dim_rate_code`, `dim_passenger_group` và `dim_distance_band` có thành viên Unknown để mọi khóa ngoại của Fact đều có thể tra cứu hợp lệ.
+
+DDL nằm trong `sql/03_dds/03_dds_tables.sql` và được thiết kế idempotent. Các thành phần tra cứu tĩnh được sinh hoặc đồng bộ bằng script DDL; `dim_location` được đồng bộ riêng với dữ liệu Taxi Zones.
+
+## 3. Quy trình nạp dữ liệu
+
+Luồng nạp DDS như sau:
+
+```text
+stg.taxi_zone --> sync_dim_location --> dds.dim_location
+stg.yellow_trip --> export_fact_trip  --> dds.fact_trip
 ```
-[ stg.taxi_zone (265) ] ──► [ sync_dim_location ] ──► [ dds.dim_location (266) ]
-        DELETE+INSERT toàn phần, idempotent
 
-[ stg.yellow_trip ] ──► [ export_fact_trip ] ──► [ dds.fact_trip ]
-  theo từng tháng (2024-01, 2024-02, 2025-01):
-  is_period_loaded? ── Yes ──► bỏ qua
-         │ No
-         ▼ DELETE theo period_key + INSERT...SELECT set-based
-           (JOIN dim_location, CROSS JOIN Unknown, date_key từ pickup_datetime)
-         ▼ end_batch + mark_period_loaded
-```
+Pipeline nạp Fact thực hiện:
 
-1. **Nạp set-based, không row-by-row:** Fact 9 triệu dòng được nạp bằng một câu `INSERT...SELECT` mỗi tháng (JOIN + lọc khoảng ngày sargable), hoàn thành ~3 phút/tháng thay vì hàng giờ.
-2. **Tính Idempotency hai lớp:** `is_period_loaded(engine, 'fact_trip', period_key)` bỏ qua tháng đã `Success`; trong tháng thì `DELETE WHERE period_key` trước khi nạp lại, chạy lại pipeline không nhân bản.
-3. **Ghi vết Metadata:** Mỗi tháng một `batch_id` qua `start_batch/end_batch` (`rows_read = rows_loaded`), lỗi ghi `meta.etl_error_log` qua `log_error()`, tháng xong ghi `meta.etl_load_control` qua `mark_period_loaded()`.
-4. **Mã block được lưu vết:** `mage_etl/data_exporters/sync_dim_location.py`, `export_fact_trip.py` + `mage_etl/pipelines/load_dds/metadata.yaml`, kèm bản sao tham khảo `mage_blocks/load_dds/`.
+1. Kiểm tra 8 Dimension đã có đủ dữ liệu.
+2. Kiểm tra kỳ Staging đã nạp thành công.
+3. Bỏ qua kỳ đã có trạng thái `Success` trong metadata.
+4. Xóa dữ liệu Fact của kỳ trước khi nạp lại.
+5. Nạp Fact bằng `INSERT ... SELECT` set-based trong một transaction.
+6. Kiểm tra số dòng và khóa Dimension trước khi ghi trạng thái thành công.
+7. Ghi `batch_id`, `rows_read`, `rows_loaded`, trạng thái batch và lỗi ETL vào schema `meta`.
 
----
+Phần Location được nạp bằng `MERGE`/đồng bộ update–insert, không xóa Dimension đang được Fact tham chiếu. Fact được ánh xạ qua ngày, giờ, zone và các Dimension nghiệp vụ. Các mã không tìm thấy được `COALESCE` về dòng Unknown.
 
-## 4. Các Quy tắc Biến đổi Staging → DDS
+Mã nguồn của phần nạp nằm tại:
 
-| # | Quy tắc | Cách thực hiện |
-|:---:|---|---|
-| 1 | Tra cứu khóa vị trí | `JOIN dds.dim_location` theo `location_id`; `LEFT JOIN + COALESCE` về dòng Unknown (-1) cho mã lạ |
-| 2 | Suy diễn khóa ngày | `date_key = YEAR*10000 + MONTH*100 + DAY` từ `pickup_datetime` |
-| 3 | Lọc đúng kỳ | `pickup_datetime >= đầu tháng AND < đầu tháng sau` (thay vì so chuỗi) |
-| 4 | Giữ grain và measure | Không gom nhóm, không đổi kiểu tiền; `total_amount` giữ nguyên để đối soát |
-| 5 | Truy vết | Mọi dòng fact mang `batch_id` (→ `meta.etl_batch`) và `period_key` |
+- `mage_etl/data_exporters/sync_dim_location.py`;
+- `mage_etl/data_exporters/export_fact_trip.py`;
+- `mage_etl/pipelines/load_dds/metadata.yaml`;
+- bản sao tham khảo `mage_blocks/load_dds/`.
 
----
+## 4. Quy tắc chuyển đổi Staging sang DDS
 
-## 5. Bảng Số liệu Đối soát Thực tế
+| Quy tắc | Cách thực hiện |
+|---|---|
+| Ngày đón/trả | Tạo khóa `YYYYMMDD` từ `pickup_datetime` và `dropoff_datetime` |
+| Giờ đón/trả | Tính khóa phút trong ngày bằng giờ, phút |
+| Location | Join theo `location_id`, không khớp thì dùng Unknown |
+| Vendor, Payment, Rate code | Join theo mã nguồn, không khớp thì dùng Unknown |
+| Nhóm hành khách | Phân loại bằng `passenger_count` |
+| Khoảng cự ly | Phân loại bằng `trip_distance` |
+| Measure | `trip_count = 1`; `trip_duration = DATEDIFF(MINUTE, pickup, dropoff)` |
+| Giữ grain | Không gom nhóm dòng chuyến; lưu `stg_trip_id` để truy vết |
+| Đúng kỳ | Nạp theo `pickup_datetime >= đầu tháng` và `< đầu tháng sau` |
+| Đối soát tiền | Giữ và nạp nguyên `total_amount` theo kiểu DECIMAL |
 
-### 5.1. Tổng quan nạp DDS
-| Chỉ số | 2024-01 | 2024-02 | 2025-01 | Tổng |
-|---|:---:|:---:|:---:|:---:|
-| Staging đọc (`rows_read`) | 2.964.624 | 3.007.526 | 3.475.226 | **9.447.376** |
-| Fact nạp (`rows_loaded`) | 2.869.967 | 2.901.778 | 3.253.069 | **9.024.814** |
-| Tỷ lệ giữ lại (%) | 96,81% | 96,48% | 93,61% | **95,53%** |
+## 5. Kết quả nạp và đối soát
 
-| Bảng DDS | Số dòng | Kỳ vọng | Kết quả |
-|---|:---:|:---:|:---:|
-| `dds.dim_location` | 266 | 265 + Unknown | ✔ |
-| `dds.dim_date` | 1.096 | 2024–2026 | ✔ |
-| `dds.fact_trip` | 9.024.814 | = `stg.yellow_trip` (check 5) | **PASS** |
-| `SUM(total_amount)` stg vs fact | 244.746.357,97 = 244.746.357,97 (check 6) | bằng nhau | **PASS** |
+Các kiểm tra `05_reconcile_checks.sql` xác nhận:
 
-### 5.2. Bối cảnh chất lượng nguồn (từ `06_reject_statistics.sql`, 422.562 dòng reject = 4,47%)
-1. `DISTANCE_LE_ZERO` 196.011 (46,39%) — quãng đường zero, lỗi cảm biến GPS.
-2. `NEGATIVE_FARE;INVALID_TOTAL_AMOUNT` 123.106 (29,13%) — giao dịch hủy/hoàn tiền.
-3. `NEGATIVE_FARE` 78.015 (18,46%).
-4. Các tổ hợp hiếm (`DURATION_EXCEEDS_24H`, `DROPOFF_LE_PICKUP`, `OUT_OF_PERIOD`…) chiếm phần còn lại — toàn bộ đã cô lập ở `stg.yellow_trip_reject`, không lọt vào fact.
+- Số dòng Fact bằng số dòng Staging hợp lệ.
+- Tổng `total_amount` của Staging bằng Fact.
+- Không có batch ETL trạng thái Failed.
+- Danh mục zone có 265 dòng.
+- Các bảng Dimension có đủ dữ liệu.
+- Không có dòng Fact thiếu khóa Dimension hoặc measure hợp lệ.
 
----
+Kết quả tích hợp được nạp ở 5 kỳ `2024-01`, `2024-02`, `2025-01`, `2025-05` và `2025-06`:
 
-## 6. Kết luận và Bàn giao
-* Tầng DDS hoàn thành: `sql/03_dds/03_dds_tables.sql`, pipeline `load_dds` (2 block), mapping `docs/mapping.xlsx` (bản nháp chờ Huy chốt chính thức).
-* Đối soát check 5+6 đạt **PASS**; `meta.etl_load_control` ghi nhận 6/6 `Success` (3 kỳ staging + 3 kỳ fact).
-* Bàn giao cho **Huy** ghép pipeline tổng theo tháng và **Hảo** đối soát, tích hợp, đóng gói nộp.
+| Chỉ số | Kết quả |
+|---|---:|
+| Số dòng Staging hợp lệ | 16.988.701 |
+| Số dòng Fact | 16.988.701 |
+| Tổng tiền Staging | 478.610.999,06 USD |
+| Tổng tiền Fact | 478.610.999,06 USD |
+| Số dòng bảng Dimension | Đạt các ngưỡng yêu cầu của GĐ1 |
+
+## 6. Kết luận
+
+Tầng DDS đã hoàn thành theo mô hình 8 Dimension và 1 Fact:
+
+- Thiết kế đầy đủ các Dimension Date, Time, Location, Vendor, Payment Type, Rate Code, Passenger Group và Distance Band.
+- `dds.fact_trip` lưu grain một chuyến đi cho một dòng, có 11 khóa Dimension và các measure nghiệp vụ.
+- Pipeline nạp Fact chạy set-based theo kỳ, idempotent và có metadata truy vết.
+- Các Dimension, mã Unknown và khóa ngoại bảo đảm không bị mất dữ liệu hoặc orphan key.
+- Kết quả nạp 5 kỳ đã đạt đối soát số dòng và tổng tiền giữa Staging và DDS.
+
+Phần mã DDL, pipeline và kiểm tra đối soát nằm tại `sql/03_dds/03_dds_tables.sql`, `mage_etl/data_exporters/`, `sql/05_tests/05_reconcile_checks.sql` và `sql/05_tests/08_master_period_checks.sql`.

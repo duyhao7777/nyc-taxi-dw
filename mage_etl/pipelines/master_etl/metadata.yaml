@@ -38,5 +38,7 @@ tags:
 - etl
 type: python
 uuid: master_etl
-variables_dir: C:\Users\PC/.mage_data\mage_etl
+variables:
+  period_key: auto
+variables_dir: /home/src/mage_data/mage_etl
 widgets: []
