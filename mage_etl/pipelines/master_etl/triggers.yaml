@@ -1,0 +1,16 @@
+triggers:
+- description: Automatically load available monthly taxi data and validate ETL results.
+  envs: []
+  last_enabled_at: 2026-11-17 19:27:16.173976
+  name: master_etl_daily
+  pipeline_uuid: master_etl
+  schedule_interval: 0 19 * * *
+  schedule_type: time
+  settings:
+    skip_if_previous_running: true
+  sla: null
+  start_time: 2026-11-17 17:14:00
+  status: active
+  token: 255b360c8b414775beb19fcda65fdbda
+  variables:
+    period_key: auto

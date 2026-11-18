@@ -25,7 +25,7 @@ IF NOT EXISTS (SELECT 1 FROM dds.dim_location WHERE location_id = -1)
     VALUES (-1, N'Unknown', N'Unknown', N'Unknown');
 GO
 
--- 2. DIM DATE (sinh san 2024-2026, nap 1 lan)
+-- 2. DIM DATE (sinh san 2015-2026, nap 1 lan)
 IF OBJECT_ID(N'dds.dim_date') IS NULL
 BEGIN
     CREATE TABLE dds.dim_date (
@@ -43,7 +43,7 @@ GO
 
 SET DATEFIRST 1;
 ;WITH d AS (
-    SELECT CAST('2024-01-01' AS DATE) AS d
+    SELECT CAST('2015-01-01' AS DATE) AS d
     UNION ALL
     SELECT DATEADD(DAY, 1, d) FROM d WHERE d < '2026-12-31'
 )

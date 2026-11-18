@@ -18,7 +18,7 @@ def export_stg_taxi_zone(df, *args, **kwargs):
         df['batch_id'] = batch_id
         with engine.begin() as conn:
             conn.execute(text('DELETE FROM stg.taxi_zone'))   # nap lai toan bo, chay lai nhieu lan van an toan
-        df.to_sql('taxi_zone', engine, schema='stg', if_exists='append', index=False, chunksize=500)
+            df.to_sql('taxi_zone', conn, schema='stg', if_exists='append', index=False, chunksize=500)
         end_batch(engine, batch_id, 'Success', rows_read=len(df), rows_loaded=len(df))
     except Exception as e:
         log_error(engine, batch_id, 'export_stg_taxi_zone', e)
