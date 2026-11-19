@@ -54,16 +54,23 @@ def main():
             cursor.execute(batch)
             n_ok += 1
             print(f'[OK  ] batch {i:>2}: {first[:90]}')
-            if cursor.description:   # batch co tra ve bang ket qua (vd script doi soat)
-                rows = cursor.fetchall()
-                cols = [d[0] for d in cursor.description]
-                if rows:
-                    print('       ' + ' | '.join(cols))
-                    for r in rows:
-                        print('       ' + ' | '.join('' if v is None else str(v) for v in r))
-                    print(f'       -> {len(rows)} dong')
-                else:
-                    print('       -> (0 dong)')
+            # 1 batch co the tra ve nhieu bang ket qua lien tiep -> in het
+            while True:
+                if cursor.description:
+                    rows = cursor.fetchall()
+                    cols = [d[0] for d in cursor.description]
+                    if rows:
+                        print('       ' + ' | '.join(cols))
+                        for r in rows:
+                            print('       ' + ' | '.join('' if v is None else str(v) for v in r))
+                        print(f'       -> {len(rows)} dong')
+                    else:
+                        print('       -> (0 dong)')
+                try:
+                    if not cursor.nextset():
+                        break
+                except Exception:
+                    break
         except Exception as e:
             print(f'[FAIL] batch {i:>2}: {first[:90]}')
             print('       ', str(e)[:600])

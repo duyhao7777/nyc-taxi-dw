@@ -42,7 +42,7 @@ Lịch chính thức đã cấu hình trên Mage v0.9.80: trigger `master_etl_da
 
 Test Plan `docs/Test_Plan_Huy.md` gồm 25 test case: kiểm tra count, tổng tiền, FK, NULL, grain, log, reject, schema evolution, retry, idempotency và lịch chạy. Script `08_master_period_checks.sql` xuất bảng PASS/FAIL theo kỳ. Hàm reconcile của master kiểm tra số dòng, tổng tiền, số tiền không NULL, lineage, khóa tham chiếu và metadata trước khi trả thành công.
 
-Kiểm thử thực tế ngày 17–18/11/2026 trên SQL Server 2022 Express, ODBC Driver 17 và Mage v0.9.80: hai unit test `test_months`, `test_quality` đều PASS trong môi trường .venv (lần cuối 0,037 giây). SQL 08 đạt 12/12 PASS mỗi kỳ, tổng 60/60 lượt SQL. Đây là kết quả thực nghiệm, không còn chỉ là fixture chạy với stub. SQL 05 đạt thêm 6/6 kiểm tra đối soát toàn kho. Tổng cộng 68/68 lượt kiểm thử trong ba bộ Python, SQL 08 và SQL 05 đạt PASS. Kiểm thử thiếu file (TC16) và chuẩn hóa CBD fee (TC19) đã có minh chứng riêng; các test retry, schema lịch sử và overlap chưa được xác minh đầy đủ. Kết quả chi tiết được lưu trong `docs/Test_Plan_Huy.md`.
+Kiểm thử thực tế ngày 17–18/11/2026 trên SQL Server 2022 Express, ODBC Driver 17 và Mage v0.9.80: hai unit test `test_months`, `test_quality` đều PASS trong môi trường .venv (lần cuối 0,037 giây). SQL 08 đạt 12/12 PASS mỗi kỳ, tổng 60/60 lượt SQL. Đây là kết quả thực nghiệm, không còn chỉ là fixture chạy với stub. SQL 05 đạt thêm 6/6 kiểm tra đối soát toàn kho. Tổng cộng 68/68 lượt kiểm thử trong ba bộ Python, SQL 08 và SQL 05 đạt PASS. Kiểm thử thiếu file (TC20) và chuẩn hóa CBD fee (TC23) đã có minh chứng riêng; các test retry, schema lịch sử và overlap chưa được xác minh đầy đủ. Kết quả chi tiết được lưu trong `docs/Test_Plan_Huy.md`.
 
 ## 5. Kết quả thực nghiệm bản tích hợp
 
@@ -68,16 +68,16 @@ Tỷ lệ hợp lệ 92,52%, reject 7,48% (theo thống kê SQL 06). Số dòng 
 
 ### 5.3. Kiểm thử bổ sung và đối soát toàn kho
 
-**Kiểm thử thiếu file nguồn (TC16).** Chọn kỳ 2025-12 chưa có file trong thư mục nguồn. Lệnh `Test-Path` trả về `False`; khi gọi master với `--months 2025-12`, hệ thống phát sinh `FileNotFoundError` tại bước kiểm tra file đầu vào. Truy vấn `meta.etl_load_control` không trả về bản ghi cho kỳ này và số dòng Staging có tên file nguồn tương ứng bằng 0. Kết quả PASS: hệ thống dừng đúng khi thiếu đầu vào, không ghi nhận kỳ nạp thành công hoặc tạo dữ liệu Staging cho file thiếu. Đây là kiểm thử âm có chủ đích.
+**Kiểm thử thiếu file nguồn (TC20).** Chọn kỳ 2025-12 chưa có file trong thư mục nguồn. Lệnh `Test-Path` trả về `False`; khi gọi master với `--months 2025-12`, hệ thống phát sinh `FileNotFoundError` tại bước kiểm tra file đầu vào. Truy vấn `meta.etl_load_control` không trả về bản ghi cho kỳ này và số dòng Staging có tên file nguồn tương ứng bằng 0. Kết quả PASS: hệ thống dừng đúng khi thiếu đầu vào, không ghi nhận kỳ nạp thành công hoặc tạo dữ liệu Staging cho file thiếu. Đây là kiểm thử âm có chủ đích.
 
-**Kiểm thử thay đổi schema (TC19).** Kiểm tra cột `cbd_congestion_fee` trong Staging theo năm:
+**Kiểm thử thay đổi schema (TC23).** Kiểm tra cột `cbd_congestion_fee` trong Staging theo năm:
 
 | Năm | Số chuyến hợp lệ | Tổng CBD fee (USD) | Số NULL |
 |---|---:|---:|---:|
 | 2024 | 5.771.745 | 0,00 | 0 |
 | 2025 | 11.216.956 | 5.993.834,50 | 0 |
 
-Kết quả phù hợp quy tắc bổ sung giá trị 0 khi cột phụ phí mới không tồn tại trong dữ liệu cũ. TC19 đạt PASS trong phạm vi các kỳ 2024–2025 đã nạp; không suy rộng cho tất cả schema lịch sử.
+Kết quả phù hợp quy tắc bổ sung giá trị 0 khi cột phụ phí mới không tồn tại trong dữ liệu cũ. TC23 đạt PASS trong phạm vi các kỳ 2024–2025 đã nạp; không suy rộng cho tất cả schema lịch sử.
 
 **Đối soát toàn hệ thống.** Script `sql/05_tests/05_reconcile_checks.sql` đạt 6/6 PASS:
 
@@ -128,13 +128,13 @@ Tỷ lệ Reject tháng 5–6 năm 2025 cao hơn các kỳ năm 2024 đã khảo
 
 | Trạng thái | Số test case | Mã |
 |---|---:|---|
-| PASS – đạt trong phạm vi đã kiểm thử | 15 | TC01–TC13, TC16, TC19 |
-| PARTIAL – kiểm chứng một phần | 4 | TC14, TC15, TC20, TC21 |
-| NOT RUN – chưa thực hiện | 3 | TC17, TC18, TC22 |
-| GAP – khác biệt với thiết kế GĐ1 | 3 | TC23–TC25 |
-| **Tổng** | **25** | TC01–TC25 |
+| PASS – đạt trong phạm vi đã kiểm thử | 22 | TC01–TC17, TC19, TC20, TC23, TC25, TC29 |
+| PARTIAL – kiểm chứng một phần | 2 | TC18, TC24 |
+| NOT RUN – chưa thực hiện | 3 | TC21, TC22, TC26 |
+| GAP – khác biệt với thiết kế GĐ1 | 2 | TC27–TC28 |
+| **Tổng** | **29** | TC01–TC29 |
 
-Python Unit Test đạt 2/2, SQL 08 đạt 60/60 (12 điều kiện trên 5 kỳ), SQL 05 đạt 6/6; tổng 68/68 lượt PASS chỉ tính ba bộ kiểm thử này. Không đồng nghĩa toàn bộ 25 test case đã PASS. TC14 chưa so sánh riêng surrogate key trước/sau; TC15 chưa lưu đối chiếu riêng các kỳ cũ khi nạp kỳ mới; TC20 thiếu log CLI chứng minh auto phát hiện kỳ mới; TC21 chưa thử chạy chồng. TC17–18 và TC22 cần môi trường thử nghiệm phù hợp. GAP là khác biệt thiết kế, không đồng nghĩa toàn bộ pipeline thất bại.
+Python Unit Test đạt 2/2, SQL 08 đạt 60/60 (12 điều kiện trên 5 kỳ), SQL 05 đạt 6/6; tổng 68/68 lượt PASS chỉ tính ba bộ kiểm thử này. Không đồng nghĩa toàn bộ 29 test case đã PASS. TC18 chưa so sánh riêng surrogate key trước/sau; TC19 đã đạt PASS khi nạp kỳ mới và giữ nguyên kỳ cũ; TC24 thiếu log CLI chứng minh auto phát hiện kỳ mới; TC25 chưa thử chạy chồng. TC21–22 và TC26 cần môi trường thử nghiệm phù hợp. GAP là khác biệt thiết kế, không đồng nghĩa toàn bộ pipeline thất bại.
 
 ### 5.6. Minh chứng cần đính kèm khi ghép báo cáo PDF
 

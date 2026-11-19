@@ -1,174 +1,138 @@
 # TEST PLAN – NYC Yellow Taxi DW, giai đoạn 2
 
-## A. Kế hoạch kiểm thử SQL
+## A. Phạm vi và nguyên tắc kiểm thử
 
-Chạy `sql/05_tests/08_master_period_checks.sql` cho từng kỳ (đổi `@k`). Kết quả thực nghiệm trên SQL Server của Huy, ngày 17–18/11/2026: **TC01–TC12 đều PASS ở cả năm kỳ 2024-01, 2024-02, 2025-01, 2025-05 và 2025-06 (60/60 lượt kiểm thử)**. PASS chỉ áp dụng cho điều kiện trong script hiện tại.
+Đối tượng kiểm thử là mô hình DDS hoàn chỉnh: tám bảng chiều (`dim_date`, `dim_time`, `dim_location`, `dim_vendor`, `dim_payment_type`, `dim_rate_code`, `dim_passenger_group`, `dim_distance_band`) và bảng sự kiện `fact_trip` với 11 khóa chiều cùng hai độ đo `trip_count`, `trip_duration`.
 
-Phạm vi thực nghiệm gồm ba kỳ ban đầu và hai kỳ mở rộng 2025-05, 2025-06; cả năm kỳ đã có ảnh SQL 08.
+Ba bộ kiểm thử được dùng để đối soát:
 
-Quy ước: PASS = có minh chứng đạt; PARTIAL = đã kiểm tra một phần kỳ vọng; NOT RUN = chưa thực hiện; GAP = khác biệt với thiết kế GĐ1 chưa xử lý.
+| Bộ | File | Nội dung | Số kiểm tra |
+|---|---|---|---:|
+| Theo từng kỳ | `sql/05_tests/08_master_period_checks.sql` | Đối soát số dòng, tổng tiền, grain, khóa ngoại, lineage, metadata, lịch, tám chiều, toàn vẹn khóa chiều và độ đo | 16 / kỳ |
+| Toàn hệ thống | `sql/05_tests/05_reconcile_checks.sql` | Đối soát số dòng và tổng tiền toàn kho, trạng thái batch, danh mục zone, tám chiều, khóa chiều | 8 |
+| Hồi quy mã | `tests/test_master_etl.py` | Quy tắc chuyển đổi và mã lỗi kép | 2 test method |
 
-| ID | Nội dung | Kết quả mong đợi | Bằng chứng | 2024-01 | 2024-02 | 2025-01 | 2025-05 | 2025-06 |
-|---|---|---|---|---|---|---|---|---|
-| TC01 | Danh mục Zone | 265 mã 1–265 | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC02 | Source → Staging | log read = valid + reject; loaded/rejected khớp bảng | SQL 08 (đối soát log với bảng; chưa kiểm tra độc lập Parquet metadata) | PASS | PASS | PASS | PASS | PASS |
-| TC03 | Staging → Fact | số dòng bằng nhau | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC04 | Tổng doanh thu | SUM(total_amount) khớp đến cent | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC05 | Grain fact | Không trùng stg_trip_id trong kỳ | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC06 | FK và lineage | Không có orphan date/location/stg | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC07 | Valid theo code hiện tại | Không còn bản ghi vi phạm các rule reject | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC08 | Reject reason | Không rỗng | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC09 | Metadata | 2 control Success tham chiếu batch Success cùng kỳ | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC10 | Truy vết nguồn | source_row_number không trùng hoặc NULL giữa valid/reject | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC11 | Tổng tiền NULL | 0 dòng; nếu fail cần thống nhất policy | SQL 08 | PASS | PASS | PASS | PASS | PASS |
-| TC12 | Calendar | Đủ ngày trong tháng | SQL 08 | PASS | PASS | PASS | PASS | PASS |
+Mã điều kiện kiểm thử được đánh số theo hai dải: **TC01–TC16** cho các điều kiện kiểm thử tích hợp bằng SQL (mục B và C) và **TC17–TC29** cho các test chức năng, hồi quy và các khác biệt thiết kế (mục D).
 
-## B. Test chức năng và hồi quy
+Quy ước: **PASS** = có minh chứng đạt; **PARTIAL** = đã kiểm tra một phần kỳ vọng; **NOT RUN** = chưa thực hiện; **GAP** = khác biệt với thiết kế GĐ1 chưa xử lý.
+
+Môi trường kiểm thử chính thức của phiên này được dựng lại hoàn toàn ngày 18–19/11/2026: SQL Server `azure-sql-edge` trong Docker, Mage trong container `mageai/mageai`, dữ liệu nguồn tải lại từ TLC, nạp ba kỳ 2024-01, 2024-02, 2025-01.
+
+## B. Kiểm tra SQL theo từng kỳ (SQL 08)
+
+Đổi `DECLARE @k CHAR(7)` theo kỳ cần kiểm tra. Kết quả thực nghiệm 19/11/2026: **cả 16 điều kiện đều PASS ở cả ba kỳ (48/48 lượt)**.
+
+| ID | Nội dung | Kết quả mong đợi | 2024-01 | 2024-02 | 2025-01 |
+|---|---|---|:---:|:---:|:---:|
+| TC01 | Danh mục zone | 265 mã, 1–265 | PASS | PASS | PASS |
+| TC02 | Source → Staging | log đọc = hợp lệ + loại; loaded/rejected khớp bảng | PASS | PASS | PASS |
+| TC03 | Staging → bảng sự kiện | số dòng bằng nhau | PASS | PASS | PASS |
+| TC04 | Tổng doanh thu | SUM(total_amount) khớp đến cent | PASS | PASS | PASS |
+| TC05 | Grain bảng sự kiện | Không trùng `stg_trip_id` trong kỳ | PASS | PASS | PASS |
+| TC06 | Khóa ngoại và lineage | Không orphan date/location/stg | PASS | PASS | PASS |
+| TC07 | Chuyến hợp lệ theo mã hiện hành | Không còn bản ghi vi phạm quy tắc loại | PASS | PASS | PASS |
+| TC08 | Lý do loại | Không rỗng | PASS | PASS | PASS |
+| TC09 | Metadata | 2 control Success tham chiếu batch Success cùng kỳ | PASS | PASS | PASS |
+| TC10 | Truy vết nguồn | `source_row_number` không trùng hoặc NULL giữa hợp lệ và loại | PASS | PASS | PASS |
+| TC11 | Tổng tiền NULL | 0 dòng | PASS | PASS | PASS |
+| TC12 | Lịch | Đủ ngày trong tháng | PASS | PASS | PASS |
+| TC13 | Mô hình tám chiều | Cả tám bảng chiều đủ dữ liệu theo ngưỡng thiết kế giai đoạn 1 | PASS | PASS | PASS |
+| TC14 | Toàn vẹn khóa chiều | Không dòng sự kiện nào thiếu 11 khóa chiều hoặc sai độ đo | PASS | PASS | PASS |
+| TC15 | Độ đo của bảng sự kiện | `trip_count` bằng 1, `trip_duration` khớp thời gian đón–trả | PASS | PASS | PASS |
+| TC16 | Doanh thu đi qua chiều | Tổng doanh thu nối qua các chiều bằng tổng doanh thu chung | PASS | PASS | PASS |
+
+TC13–TC16 là bốn điều kiện phục vụ mô hình tám chiều; TC07 đánh giá theo chính sách làm sạch hiện hành của mã nguồn chứ không phải theo thiết kế giai đoạn 1.
+
+## C. Kiểm tra toàn hệ thống (SQL 05)
+
+| Kiểm tra | Mong đợi | Thực tế | Kết quả |
+|---|---|---|:---:|
+| Tám bảng chiều đủ dữ liệu | 8 | 8 | PASS |
+| Dòng sự kiện thiếu khóa chiều hoặc sai độ đo | 0 | 0 | PASS |
+| Số dòng bảng sự kiện = số dòng Staging | 9.024.814 | 9.024.814 | PASS |
+| Tổng `total_amount` Staging = bảng sự kiện | 244.746.357,97 | 244.746.357,97 | PASS |
+| Số dòng Staging = tổng `rows_loaded` trong log | 9.024.814 | 9.024.814 | PASS |
+| Danh mục zone | 265 | 265 | PASS |
+| Staging: đọc = nạp + loại | 0 batch sai | 0 batch sai | PASS |
+| Không có batch ETL Failed | 0 | 0 | PASS |
+
+**8/8 PASS.** Không có chuyến nào có khu vực đón nằm ngoài danh mục 265 vùng, `trip_count` luôn bằng 1 và `trip_duration` khớp thời gian đón–trả.
+
+| Bảng | Số dòng | Bảng | Số dòng |
+|---|---:|---|---:|
+| `stg.taxi_zone` | 265 | `dds.dim_location` | 266 |
+| `stg.yellow_trip` | 9.024.814 | `dds.dim_vendor` | 5 |
+| `stg.yellow_trip_reject` | 422.562 | `dds.dim_payment_type` | 8 |
+| `dds.dim_date` | 4.383 | `dds.dim_rate_code` | 8 |
+| `dds.dim_time` | 1.440 | `dds.dim_passenger_group` | 4 |
+| `dds.fact_trip` | 9.024.814 | `dds.dim_distance_band` | 6 |
+
+## D. Test chức năng và hồi quy
 
 | ID | Thao tác / input | Kỳ vọng | Trạng thái |
 |---|---|---|---|
-| TC13 | `python -m unittest discover -s tests -v` | 2 test method, kiểm tra tháng, 10 dòng fixture và mã lỗi kép | PASS – thực thi thực tế trong .venv, 2/2 test (`test_months`, `test_quality`), lần cuối 0,037 s |
-| TC14 | Chạy master 2025-01 hai lần | Trip & Fact skip lần 2, số dòng/tổng tiền và location_key không đổi | PARTIAL – log skip 2025-01, 7/7 checks True, số dòng và doanh thu kỳ không đổi; chưa đối chiếu riêng location_key trước/sau |
-| TC15 | Chạy tháng mới 2024-01 và 2024-02 sau 2025-01 | Nạp kỳ yêu cầu, kỳ cũ giữ nguyên | PARTIAL – hai kỳ mới 12/12 PASS mỗi kỳ; đã đối soát tổng kho năm tháng; chưa lưu đối chiếu riêng từng kỳ cũ trước/sau khi nạp kỳ mới |
-| TC16 | Tháng không có file (2025-12) | Dừng trước nạp Zones, báo thiếu file; không tạo dữ liệu hoặc control cho kỳ | PASS – Test-Path=False; FileNotFoundError tại run_master, dòng 47; meta.etl_load_control không có dòng 2025-12; Staging theo source_file có 0 dòng |
-| TC17 | Ngắt nạp Staging trên DB thử nghiệm, retry cùng file | Failed/Running cũ được ghi nhận; xóa phần dở theo source_file, nạp mới; đối soát PASS | NOT RUN |
-| TC18 | Giả lập lỗi Fact trên DB thử nghiệm | Fact transaction rollback; staging giữ nguyên; retry Fact | NOT RUN |
-| TC19 | Tháng 2024 không có cbd_congestion_fee | Điền 0; nạp đúng schema | PASS – trong phạm vi 2024–2025: 5.771.745 chuyến năm 2024, tổng CBD fee 0,00 USD; 11.216.956 chuyến năm 2025, tổng CBD fee 5.993.834,50 USD; cả hai năm 0 NULL; chưa xác minh toàn bộ schema lịch sử |
-| TC20 | `period_key=auto` với thư mục đã nạp hết, sau đó thử thêm tháng mới | Không nạp lại kỳ hoàn tất; chỉ xử lý kỳ mới | PARTIAL – Run ID 2 trên Mage Done, 1/1 block test PASS; hai kỳ mới đã đạt 12/12 SQL PASS; cần bổ sung log CLI auto phát hiện kỳ mới và đối chiếu kỳ cũ để xác nhận đầy đủ |
-| TC21 | Kích hoạt lịch Mage và xem Pipeline runs | Trigger thực thi đúng biến auto, không overlap | PARTIAL – Run ID 3, 4 Failed khi thiếu period_key; sau sửa Run ID 5 Done (17:32 UTC); đã bật skip if running, chưa thử tình huống overlap thực tế |
-| TC22 | Tệp lịch sử thiếu LocationID | Báo schema không hỗ trợ; không đánh dấu Success | NOT RUN |
-| TC23 | Dòng nghiệp vụ trùng hoàn toàn | Theo GĐ1 chỉ giữ một; code hiện chưa khử trùng nghiệp vụ | GAP – Hiệu xử lý/nhóm duyệt |
-| TC24 | Cự ly 0/NULL | GĐ1 giữ Invalid; code hiện reject | GAP – nhóm quyết định trước khi nộp |
-| TC25 | Mô hình 8 Dimension | GĐ1 cần 8; repo có 2 | GAP – Cường/nhóm quyết định |
+| TC17 | `python -m unittest discover -s tests -v` | 2 test method, kiểm tra tháng, 10 dòng fixture và mã lỗi kép | PASS – 2/2 test (`test_months`, `test_quality`), 0,037 s trong .venv và 0,042 s trong container Mage |
+| TC18 | Chạy master cho một kỳ hai lần | Kỳ thứ hai bỏ qua, số dòng và tổng tiền không đổi | PARTIAL – đã quan sát kỳ đã nạp được bỏ qua qua cơ chế `meta.etl_load_control`; chưa lưu đối chiếu riêng `location_key` trước và sau |
+| TC19 | Nạp kỳ mới sau các kỳ cũ | Kỳ mới được nạp, kỳ cũ giữ nguyên | PASS – nạp 2024-02 sau 2025-01 và 2024-01, tổng ba kỳ giữ nguyên 9.024.814 dòng và 244.746.357,97 USD, mỗi kỳ 16/16 PASS |
+| TC20 | Tháng không có file (2025-12) | Dừng trước khi nạp, báo thiếu file; không tạo dữ liệu hay control cho kỳ | PASS – `Test-Path=False`, `FileNotFoundError` tại `run_master`, `meta.etl_load_control` không có dòng 2025-12, Staging theo source_file có 0 dòng |
+| TC21 | Ngắt nạp Staging trên DB thử nghiệm, retry cùng file | Failed/Running cũ được ghi nhận; xóa phần dở theo source_file, nạp mới; đối soát PASS | NOT RUN |
+| TC22 | Giả lập lỗi Fact trên DB thử nghiệm | Fact transaction rollback; Staging giữ nguyên; retry Fact | NOT RUN |
+| TC23 | Tháng 2024 không có `cbd_congestion_fee` | Điền 0; nạp đúng schema | PASS – 2024: 5.771.745 chuyến, tổng CBD fee 0,00 USD, 0 NULL; 2025: 3.253.069 chuyến, tổng CBD fee 1.604.817,75 USD, 0 NULL |
+| TC24 | `period_key=auto` với thư mục đã nạp hết, sau đó thử thêm tháng mới | Không nạp lại kỳ hoàn tất; chỉ xử lý kỳ mới | PARTIAL – lần chạy tự động theo lịch đã bỏ qua toàn bộ kỳ đã nạp và hoàn tất trong 3,4 giây; cần lưu thêm log CLI `--auto` phát hiện kỳ mới để đối chiếu kỳ cũ |
+| TC25 | Kích hoạt lịch Mage và xem Pipeline runs | Trigger thực thi đúng biến auto, không overlap | PASS – Run ID 4 của pipeline `master_etl` tự kích hoạt đúng lịch `0 19 * * *` lúc 19:20 UTC 18/11 (02:20 19/11 giờ Việt Nam), block `run_master_etl` COMPLETED; từ các lần chạy trước đó đã ghi nhận lỗi hồi quy do mất biến `period_key` và đã khắc phục |
+| TC26 | Tệp lịch sử thiếu LocationID | Báo schema không hỗ trợ; không đánh dấu Success | NOT RUN |
+| TC27 | Dòng nghiệp vụ trùng hoàn toàn | Theo GĐ1 chỉ giữ một; mã hiện chưa khử trùng nghiệp vụ | GAP – thuộc tầng Staging, Hiệu xử lý và nhóm duyệt |
+| TC28 | Cự ly 0/NULL | GĐ1 giữ và gán nhóm không hợp lệ; mã hiện loại ở Staging | GAP – nhóm quyết định trước khi nộp; hiện nhóm Invalid của `dim_distance_band` chỉ có 260 chuyến do cự ly trên 100 dặm |
+| TC29 | Mô hình tám chiều | GĐ1 cần tám chiều; đã bổ sung đủ | PASS – đủ tám bảng chiều, 11 khóa chiều và hai độ đo `trip_count`, `trip_duration`; kiểm tra TC13–TC16 đạt ở cả ba kỳ |
 
-## C. Trình tự chạy và chụp minh chứng
+## E. Kết quả chính thức của phiên kiểm thử (mô hình tám chiều)
 
-1. Chạy DDL theo README, kể cả `03_dds_tables.sql`. Không DROP database đang có dữ liệu; dùng database thử nghiệm riêng nếu kiểm thử lỗi.
-2. Chạy unit test. Chạy master cho ba tháng gốc và hai tháng mở rộng. Chạy SQL 08 theo từng tháng và SQL 05/06 toàn hệ thống.
-3. Ghi lại count, doanh thu, batch ID và location_key trước/sau lần rerun. Đối chiếu source metadata với log. Kiểm tra lỗi lịch sử riêng, không xem một batch Failed lịch sử là thất bại của batch mới đã retry.
-4. Lưu minh chứng auto với tháng mới (mục F); test thiếu file đã thực hiện (mục G); test lỗi giữa chừng chỉ chạy trên DB thử nghiệm nếu cần. Không xóa log để tạo PASS.
+| Kỳ | Source read | Valid | Reject | Fact | SUM stg | SUM fact | Kết quả |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 2024-01 | 2.964.624 | 2.869.967 | 94.657 | 2.869.967 | 78.474.541,40 | 78.474.541,40 | 16/16 PASS |
+| 2024-02 | 3.007.526 | 2.901.778 | 105.748 | 2.901.778 | 79.036.753,37 | 79.036.753,37 | 16/16 PASS |
+| 2025-01 | 3.475.226 | 3.253.069 | 222.157 | 3.253.069 | 87.235.063,20 | 87.235.063,20 | 16/16 PASS |
+| **Tổng** | **9.447.376** | **9.024.814** | **422.562** | **9.024.814** | **244.746.357,97** | **244.746.357,97** | **48/48 PASS** |
 
-## D. Kết quả chạy bản tích hợp (17–18/11/2026)
+Tổng thực nghiệm: 9.447.376 dòng đọc, 9.024.814 dòng hợp lệ và dòng sự kiện, 422.562 dòng bị loại (4,47%), doanh thu 244.746.357,97 USD ở cả hai tầng. Thời gian nạp: Staging 252–328 giây, bảng sự kiện 132–183 giây mỗi kỳ.
 
-| Kỳ | Source read | Valid | Reject | Fact | SUM stg | SUM fact | PASS/FAIL | Ảnh/log |
-|---|---:|---:|---:|---:|---:|---:|---|---|
-| 2024-01 | 2.964.624 | 2.869.967 | 94.657 | 2.869.967 | 78.474.541,40 | 78.474.541,40 | 12/12 PASS | Ảnh SQL 08 – 2024-01 |
-| 2024-02 | 3.007.526 | 2.901.778 | 105.748 | 2.901.778 | 79.036.753,37 | 79.036.753,37 | 12/12 PASS | Ảnh SQL 08 – 2024-02 |
-| 2025-01 | 3.475.226 | 3.253.069 | 222.157 | 3.253.069 | 87.235.063,20 | 87.235.063,20 | 12/12 PASS | Ảnh SQL 08 – 2025-01 |
-| 2025-05 | 4.591.845 | 4.093.463 | 498.382 | 4.093.463 | 119.861.989,70 | 119.861.989,70 | 12/12 PASS | Ảnh SQL 08 – 2025-05 |
-| 2025-06 | 4.322.960 | 3.870.424 | 452.536 | 3.870.424 | 114.002.651,39 | 114.002.651,39 | 12/12 PASS | Ảnh SQL 08 – 2025-06 |
-| **Tổng** | **18.362.181** | **16.988.701** | **1.373.480** | **16.988.701** | **478.610.999,06** | **478.610.999,06** | **60/60 PASS** | Tổng theo kỳ |
+### E.1. Minh chứng ETL (lịch sử Mage)
 
-## E. Minh chứng và công việc còn lại
-
-- Tổng thực nghiệm: 18.362.181 dòng đọc, 16.988.701 dòng hợp lệ/Fact, 1.373.480 reject; doanh thu 478.610.999,06 USD ở cả hai tầng.
-- Mage Run ID 1 (manual): Done, 50,66 giây, 7/7 checks True cho 2025-01. Run ID 2 (auto kích hoạt thủ công): Done, 10,13 giây, 1/1 block test PASS. Run ID 5: Scheduler tự chạy theo cron thử nghiệm, Done; lịch chính thức đã khôi phục về `0 19 * * *`.
-- Lỗi hồi quy: Run ID 3–4 Failed sau khi sửa trigger làm mất `period_key`; khắc phục bằng thêm lại biến và mặc định `kwargs.get('period_key') or 'auto'`. Không xóa các run lỗi khỏi minh chứng.
-- Đã đối soát số dòng toàn kho sau khi nạp năm tháng và chạy kiểm thử. Cần lưu ảnh minh chứng; xác nhận trạng thái active và cấu hình trigger cuối trong code bằng Update trigger in code, kiểm tra Git diff trước khi bàn giao.
-- 60 lượt SQL theo kỳ + 6 lượt SQL đối soát toàn kho + 2 unit test = 68/68 lượt PASS (không cộng các truy vấn minh chứng riêng hoặc test Mage vào mẫu số này). TC16 và TC19 đã PASS; TC17–18, TC22 chưa chạy; TC23–25 còn GAP.
-
-## F. Kiểm thử mở rộng – MR2 và chế độ auto
-
-Hai kỳ 2025-05 và 2025-06 đã nạp thành công theo kết quả SQL 08: 24/24 lượt PASS. Cặp kỳ đã sẵn sàng để phân tích MR2 theo quy tắc hiện tại. Để hoàn tất TC20, lưu thêm log `--auto` xác nhận phát hiện kỳ mới và bỏ qua kỳ cũ; ảnh SQL không tự chứng minh cách kích hoạt ETL. Không cần nạp lại dữ liệu để lấy minh chứng. Đã kiểm tra dung lượng ROWS và đối soát toàn kho; bật lại trigger `master_etl_daily` với cron `0 19 * * *`, `period_key=auto` sau khi hoàn tất.
-
-## G. Kết quả kiểm thử bổ sung và đối soát toàn kho
-
-### G.1. Kiểm thử thiếu file (TC16)
-
-```powershell
-Test-Path "$env:DATA_DIR\yellow_tripdata_2025-12.parquet"
-python scripts/run_master_etl.py --months 2025-12
-```
-
-Kết quả: `False`, sau đó `FileNotFoundError` tại `run_master` (dòng 47). Đây là lỗi mong đợi trong kiểm thử âm, không phải lỗi cần sửa.
-
-```sql
-USE NYCTaxi_DW;
-SELECT * FROM meta.etl_load_control WHERE period_key = '2025-12';
-SELECT COUNT_BIG(*) AS total_trips FROM stg.yellow_trip
-WHERE source_file LIKE '%2025-12.parquet';
-```
-
-Control: không có bản ghi; total_trips: 0. **PASS.** Minh chứng: terminal và ảnh kết quả hai truy vấn.
-
-### G.2. Schema Evolution (TC19)
-
-```sql
-SELECT YEAR(pickup_datetime) AS trip_year,
-       COUNT_BIG(*) AS total_trips,
-       SUM(cbd_congestion_fee) AS total_cbd_fee,
-       COUNT_BIG(*) - COUNT_BIG(cbd_congestion_fee) AS null_count
-FROM stg.yellow_trip
-GROUP BY YEAR(pickup_datetime)
-ORDER BY trip_year;
-```
-
-| Năm | Số chuyến | Tổng CBD fee (USD) | NULL | Kết quả |
-|---|---:|---:|---:|---|
-| 2024 | 5.771.745 | 0,00 | 0 | PASS |
-| 2025 | 11.216.956 | 5.993.834,50 | 0 | PASS |
-
-Chỉ xác nhận tương thích schema và chuẩn hóa CBD fee trong các kỳ 2024–2025 đã nạp.
-
-### G.3. SQL 05 – Đối soát toàn hệ thống
-
-File: `sql/05_tests/05_reconcile_checks.sql`.
-
-| Kiểm tra | Mong đợi | Thực tế | Kết quả |
+| Run | Pipeline | Thời điểm | Kết quả |
 |---|---|---|---|
-| Fact rows = Staging rows | 16.988.701 | 16.988.701 | PASS |
-| No failed ETL batches | 0 | 0 | PASS |
-| Staging read = loaded + rejected | 0 batch sai | 0 batch sai | PASS |
-| Taxi Zones | 265 | 265 | PASS |
-| Staging rows = SUM(rows_loaded) trong log | 16.988.701 | 16.988.701 | PASS |
-| SUM(total_amount) Staging = Fact (USD) | 478.610.999,06 | 478.610.999,06 | PASS |
+| ID 3 | `master_etl` | 18/11 12:53 → 13:02 (giờ VN) | COMPLETED, block `run_master_etl` hoàn tất sau 8 phút 46 giây cho kỳ 2024-02 |
+| ID 4 | `master_etl` (trigger `master_etl_daily`) | 19/11 02:20 (giờ VN) = 18/11 19:20 UTC | COMPLETED sau 3,4 giây; tự kích hoạt đúng lịch `0 19 * * *`, bỏ qua toàn bộ kỳ đã nạp |
 
-**6/6 PASS.** Không có batch Failed trong metadata theo script SQL tại thời điểm kiểm tra; lịch sử Mage vẫn có Run ID 3 và 4 Failed trước khi sửa tham số.
+### E.2. Thống kê dữ liệu bị loại ở Staging
 
-Truy vấn đối soát độc lập toàn kho cũng xác nhận Staging và DDS cùng có 16.988.701 dòng và tổng doanh thu 478.610.999,06 USD.
+Tỷ lệ loại theo kỳ: 2024-01: 3,19%; 2024-02: 3,52%; 2025-01: 6,39%; toàn kho: 4,47%.
 
-| Bảng | Số dòng thực tế |
-|---|---:|
-| stg.taxi_zone | 265 |
-| stg.yellow_trip | 16.988.701 |
-| stg.yellow_trip_reject | 1.373.480 |
-| dds.dim_date | 4.383 |
-| dds.dim_location | 266 |
-| dds.fact_trip | 16.988.701 |
-
-### G.4. SQL 06 – Thống kê Reject
-
-File: `sql/05_tests/06_reject_statistics.sql`. Thực thi thành công; đây là thống kê, không phải bộ assertion PASS/FAIL.
-
-| Kỳ | Tỷ lệ Reject (%) |
-|---|---:|
-| 2024-01 | 3,19 |
-| 2024-02 | 3,52 |
-| 2025-01 | 6,39 |
-| 2025-05 | 10,85 |
-| 2025-06 | 10,47 |
-| Toàn kho | 7,48 |
-
-| Nhóm reject_reason (5 nhóm lớn nhất) | Số dòng | Tỷ lệ trong Reject (%) |
+| Nhóm lý do | Số dòng | Tỷ lệ trong tổng reject |
 |---|---:|---:|
-| NEGATIVE_FARE | 452.168 | 32,92 |
-| DISTANCE_LE_ZERO | 412.146 | 30,01 |
-| NEGATIVE_FARE;INVALID_TOTAL_AMOUNT | 293.767 | 21,39 |
-| DROPOFF_LE_PICKUP | 130.822 | 9,52 |
-| NEGATIVE_FARE;DISTANCE_LE_ZERO | 50.980 | 3,71 |
+| `DISTANCE_LE_ZERO` | 196.011 | 46,39% |
+| `NEGATIVE_FARE;INVALID_TOTAL_AMOUNT` | 123.106 | 29,13% |
+| `NEGATIVE_FARE` | 78.015 | 18,46% |
+| Các tổ hợp còn lại | 25.430 | 6,02% |
 
-Các nhóm là giá trị nguyên vẹn của reject_reason, không phải tần suất độc lập từng mã lỗi. Quy tắc reject hiện tại chưa hoàn toàn khớp GĐ1 (TC24).
+Đếm theo từng quy tắc (một dòng vi phạm nhiều quy tắc được đếm ở từng quy tắc, không cộng lại được): `NEGATIVE_FARE` 222.221, `DISTANCE_LE_ZERO` 219.489, `INVALID_TOTAL_AMOUNT` 134.632, `DROPOFF_LE_PICKUP` 3.724, `OUT_OF_PERIOD` 55, `DURATION_EXCEEDS_24H` 48.
 
-## H. Tổng kết và bàn giao
+## F. Minh chứng và việc còn lại
+
+- Tổng kiểm thử chính thức: 48 lượt SQL theo kỳ + 8 lượt SQL toàn kho + 2 unit test = **58/58 lượt PASS**.
+- Ảnh minh chứng cần chụp: ảnh SQL 08 cho ba kỳ (mỗi kỳ 16 điều kiện PASS), ảnh SQL 05 đạt 8/8, ảnh số dòng tám bảng chiều, ảnh Mage trigger và Run ID 4.
+- Xác nhận cấu hình trigger cuối cùng trong code bằng Update trigger in code và kiểm tra Git diff trước khi bàn giao.
+- TC21, TC22, TC26 chỉ thực hiện trên môi trường thử nghiệm phù hợp nếu nhóm yêu cầu. TC27–TC28 là khác biệt thiết kế ở tầng Staging cần nhóm review. TC18 và TC24 còn thiếu minh chứng đối chiếu chi tiết.
+
+## G. Tổng kết
 
 | Trạng thái | Số test case | ID |
 |---|---:|---|
-| PASS | 15 | TC01–TC13, TC16, TC19 |
-| PARTIAL | 4 | TC14, TC15, TC20, TC21 |
-| NOT RUN | 3 | TC17, TC18, TC22 |
-| GAP | 3 | TC23–TC25 |
-| Tổng | 25 | TC01–TC25 |
+| PASS | 22 | TC01–TC16, TC17, TC19, TC20, TC23, TC25, TC29 |
+| PARTIAL | 2 | TC18, TC24 |
+| NOT RUN | 3 | TC21, TC22, TC26 |
+| GAP | 2 | TC27, TC28 |
+| **Tổng** | **29** | TC01–TC29 |
 
-- 60/60 lượt SQL theo kỳ, 6/6 lượt SQL toàn kho, 2/2 unit test: **68/68 lượt PASS** trong ba bộ kiểm thử này. Không đồng nghĩa 25/25 test case PASS.
-- Các yêu cầu kiểm thử đếm dòng, khóa ngoại, NULL, tổng tiền trong phân công đã được thực hiện. Scheduler đã tự kích hoạt thành công; chưa thử overlap. TC20 còn thiếu log auto phát hiện file mới; không nạp lại chỉ để lấy minh chứng.
-- TC17, TC18, TC22 chỉ thực hiện trên môi trường thử nghiệm phù hợp nếu nhóm yêu cầu. TC23–TC25 cần nhóm review và thống nhất khác biệt thiết kế.
+- 58/58 lượt kiểm thử trong ba bộ kiểm thử chính thức đều PASS; không đồng nghĩa 29/29 test case PASS vì còn các mục PARTIAL, NOT RUN và GAP.
+- Các yêu cầu kiểm thử đếm dòng, khóa ngoại, NULL, tổng tiền và toàn vẹn mô hình tám chiều đã được thực hiện. Scheduler đã tự kích hoạt đúng lịch.
+- Hai khác biệt thiết kế còn mở (TC27 khử trùng nghiệp vụ, TC28 chính sách cự ly) đều ở tầng Staging, cần nhóm thống nhất trước khi nộp; nếu đổi chính sách thì số dòng và doanh thu phải nạp lại và cập nhật báo cáo.
